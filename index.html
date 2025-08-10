@@ -1,0 +1,271 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Micro-Commute Planner — Step 1 (Fastest)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    :root { --accent:#1976d2; --bg:#fff; --panel: rgba(255,255,255,0.95); }
+    html,body,#map { height:100%; margin:0; padding:0; font-family:Inter,Segoe UI,Arial; background:#f3f4f6; }
+    .panel {
+      position: absolute; top:12px; left:12px; z-index:1000;
+      background:var(--panel); padding:12px; border-radius:10px;
+      box-shadow:0 6px 22px rgba(0,0,0,0.12); width:320px; max-width:calc(100vw - 40px);
+    }
+    .row { display:flex; gap:8px; margin-bottom:8px; }
+    input[type="text"]{ flex:1; padding:8px; border:1px solid #e6e9ee; border-radius:6px; }
+    select, button { padding:8px; border-radius:6px; border:1px solid #e6e9ee; cursor:pointer; }
+    button.primary { background:var(--accent); color:white; border:none; }
+    .small { font-size:12px; color:#555; margin-top:6px; }
+    .hint { font-size:12px; color:#777; margin-top:6px; }
+    .route-info { margin-top:8px; font-weight:600; }
+    .link { color:var(--accent); text-decoration:underline; cursor:pointer; font-size:13px; }
+    #map { position:relative; z-index:0; }
+  </style>
+</head>
+<body>
+
+<div class="panel" id="controls">
+  <div style="font-weight:700; margin-bottom:8px">Micro-Commute Planner — Fastest (MVP)</div>
+
+  <div class="row">
+    <input id="startInput" type="text" placeholder="Start address or click map" />
+    <button id="startBtn" title="Search start">🔎</button>
+  </div>
+
+  <div class="row">
+    <input id="endInput" type="text" placeholder="End address or click map" />
+    <button id="endBtn" title="Search end">🔎</button>
+  </div>
+
+  <div class="row">
+    <select id="mode">
+      <option value="foot-walking">Walking</option>
+      <option value="cycling-regular">Cycling</option>
+      <option value="driving-car">E-scooter / small vehicle</option>
+    </select>
+    <button id="planBtn" class="primary">Plan Fastest</button>
+  </div>
+
+  <div class="hint">Tip: click on map to set start or end. Use the search icon to geocode text.</div>
+  <div id="status" class="small"></div>
+  <div id="routeSummary" class="route-info"></div>
+  <div style="margin-top:8px" class="small">
+    <span class="link" id="clearBtn">Clear map</span> •
+    <span class="link" id="helpBtn">Implementation notes</span>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+/*
+  Micro-Commute Planner — Step 1
+  - Leaflet map + click-to-place start/end
+  - Nominatim geocoding for address -> coords (free)
+  - OpenRouteService directions (fastest) -> route geoJSON
+  - Important: ORS API key is exposed if used from client; ok for prototype only.
+*/
+
+const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImFjMzQwMTdiMzBjNDRjYTZhNjZhZmM0OWExYmEzNzdiIiwiaCI6Im11cm11cjY0In0="; // << replace for dev. Use proxy for production.
+
+const map = L.map('map', { zoomControl: true }).setView([19.0760,72.8777], 13);
+
+// base tiles (OSM)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+// state
+let startMarker = null, endMarker = null;
+let routeLayer = null;
+let startCoord = null, endCoord = null;
+
+// simple UI refs
+const startInput = document.getElementById('startInput');
+const endInput = document.getElementById('endInput');
+const startBtn = document.getElementById('startBtn');
+const endBtn = document.getElementById('endBtn');
+const planBtn = document.getElementById('planBtn');
+const statusEl = document.getElementById('status');
+const routeSummary = document.getElementById('routeSummary');
+const clearBtn = document.getElementById('clearBtn');
+const helpBtn = document.getElementById('helpBtn');
+
+// helpers
+function setStatus(text, isError = false) {
+  statusEl.textContent = text || '';
+  statusEl.style.color = isError ? 'crimson' : '#333';
+}
+function formatMeters(m) {
+  if (m >= 1000) return (m/1000).toFixed(2) + ' km';
+  return Math.round(m) + ' m';
+}
+function formatSeconds(s) {
+  if (s < 60) return `${Math.round(s)}s`;
+  const mins = Math.floor(s/60);
+  if (mins < 60) return `${mins} min`;
+  const hours = (mins/60).toFixed(1);
+  return `${hours} h`;
+}
+function clearRoute() {
+  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+  routeSummary.textContent = '';
+}
+
+// click-to-place logic: first click sets start, second sets end, third clears
+let clickMode = 'start'; // 'start' or 'end'
+map.on('click', (ev) => {
+  const { lat, lng } = ev.latlng;
+  if (!startCoord || (startCoord && endCoord)) {
+    // set start
+    setStart([lat,lng], true);
+    setStatus('Start set by click. Now set destination (click or search).');
+  } else {
+    // set end
+    setEnd([lat,lng], true);
+    setStatus('Destination set by click. Click "Plan Fastest" to compute route.');
+  }
+});
+
+// place marker helpers
+function setStart([lat,lng], byClick=false) {
+  startCoord = [lat, lng];
+  if (startMarker) startMarker.setLatLng([lat,lng]);
+  else startMarker = L.marker([lat,lng], { draggable:true }).addTo(map).bindPopup('Start').openPopup();
+  startMarker.on('dragend', (e) => {
+    const p = e.target.getLatLng();
+    startCoord = [p.lat, p.lng];
+  });
+  if (byClick) startInput.value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+}
+function setEnd([lat,lng], byClick=false) {
+  endCoord = [lat, lng];
+  if (endMarker) endMarker.setLatLng([lat,lng]);
+  else endMarker = L.marker([lat,lng], { icon: L.icon({ iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-red.png', iconSize:[25,41], iconAnchor:[12,41] }) }).addTo(map).bindPopup('End').openPopup();
+  endMarker.on('dragend', (e) => {
+    const p = e.target.getLatLng();
+    endCoord = [p.lat, p.lng];
+  });
+  if (byClick) endInput.value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+}
+
+// Nominatim geocoding (simple single-result)
+async function geocode(q) {
+  if (!q || q.trim() === '') { throw new Error('Empty query'); }
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
+  if (!res.ok) throw new Error('Geocode failed: ' + res.status);
+  const arr = await res.json();
+  if (!arr || arr.length === 0) throw new Error('No results found');
+  return { lat: parseFloat(arr[0].lat), lon: parseFloat(arr[0].lon), display_name: arr[0].display_name };
+}
+
+// clicking search icons
+startBtn.onclick = async () => {
+  try {
+    setStatus('Searching start...');
+    const r = await geocode(startInput.value);
+    setStart([r.lat, r.lon]);
+    map.panTo([r.lat, r.lon]);
+    setStatus('Start found: ' + r.display_name);
+  } catch (err) { setStatus(err.message, true); }
+};
+endBtn.onclick = async () => {
+  try {
+    setStatus('Searching destination...');
+    const r = await geocode(endInput.value);
+    setEnd([r.lat, r.lon]);
+    map.panTo([r.lat, r.lon]);
+    setStatus('Destination found: ' + r.display_name);
+  } catch (err) { setStatus(err.message, true); }
+};
+
+// ORS directions: fastest via GET (simple). ORS expects coords as lng,lat
+async function fetchORSRoute(profile, startLatLng, endLatLng) {
+  const start = `${startLatLng[1]},${startLatLng[0]}`; // lng,lat
+  const end = `${endLatLng[1]},${endLatLng[0]}`;       // lng,lat
+  const url = `https://api.openrouteservice.org/v2/directions/${profile}?api_key=${ORS_API_KEY}&start=${start}&end=${end}`;
+  // Note: GET is OK for two-points. For more params use POST.
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ORS error ${res.status}: ${text}`);
+  }
+  const json = await res.json();
+  if (!json || !json.features || json.features.length === 0) throw new Error('No route returned from ORS');
+  return json;
+}
+
+function drawRouteFromORSGeoJSON(geojson, color='#1976d2') {
+  clearRoute();
+  routeLayer = L.geoJSON(geojson, {
+    style: () => ({ color, weight: 5, opacity: 0.85 })
+  }).addTo(map);
+  map.fitBounds(routeLayer.getBounds(), { padding: [40,40] });
+  // show start/end markers on top
+ // if (startMarker) startMarker.bringToFront();
+  //if (endMarker) endMarker.bringToFront();
+}
+
+// Plan route button
+planBtn.onclick = async () => {
+  try {
+    if (!startCoord || !endCoord) { setStatus('Please set both start and destination (click map or search)', true); return; }
+    setStatus('Requesting fastest route...');
+    planBtn.disabled = true;
+
+    const profile = document.getElementById('mode').value; // e.g. 'foot-walking'
+    const data = await fetchORSRoute(profile, startCoord, endCoord);
+
+    // ORS geojson: features[0] geometry coords and properties.summary
+    drawRouteFromORSGeoJSON(data);
+    // extract summary
+    const summary = data.features[0].properties && data.features[0].properties.summary;
+    if (summary) {
+      const dist = formatMeters(summary.distance);
+      const dur = formatSeconds(summary.duration);
+      routeSummary.textContent = `Fastest (${profile.replace('-', ' ')}): ${dist} • ${dur}`;
+    } else {
+      routeSummary.textContent = 'Route found (no summary available)';
+    }
+    setStatus('Route displayed. Drag markers to tweak and re-plan.');
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message || 'Route failed', true);
+  } finally {
+    planBtn.disabled = false;
+  }
+};
+
+// clear logic
+clearBtn.onclick = () => {
+  if (startMarker) { map.removeLayer(startMarker); startMarker = null; startCoord = null; startInput.value = ''; }
+  if (endMarker) { map.removeLayer(endMarker); endMarker = null; endCoord = null; endInput.value = ''; }
+  clearRoute();
+  setStatus('');
+};
+
+// help modal (quick notes)
+helpBtn.onclick = () => {
+  alert(
+`Implementation notes (quick):
+- This client code uses your ORS key directly (exposed). For production, place queries behind a small server proxy to keep the key secret.
+- Nominatim geocoding has usage limits; add caching + debounce for search.
+- If ORS returns CORS errors in your environment, use a server proxy.
+- Next steps I suggest: add scenic (via park waypoints via Overpass) and low-stress (route scoring + avoid major highways)`
+  );
+};
+
+// small debugging helpers
+window.__mc_debug = {
+  setStart, setEnd, fetchORSRoute
+};
+
+setStatus('Ready — click map or paste addresses, then "Plan Fastest".');
+</script>
+</body>
+</html>
