@@ -1,271 +1,185 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Micro-Commute Planner — Step 1 (Fastest)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <style>
-    :root { --accent:#1976d2; --bg:#fff; --panel: rgba(255,255,255,0.95); }
-    html,body,#map { height:100%; margin:0; padding:0; font-family:Inter,Segoe UI,Arial; background:#f3f4f6; }
-    .panel {
-      position: absolute; top:12px; left:12px; z-index:1000;
-      background:var(--panel); padding:12px; border-radius:10px;
-      box-shadow:0 6px 22px rgba(0,0,0,0.12); width:320px; max-width:calc(100vw - 40px);
-    }
-    .row { display:flex; gap:8px; margin-bottom:8px; }
-    input[type="text"]{ flex:1; padding:8px; border:1px solid #e6e9ee; border-radius:6px; }
-    select, button { padding:8px; border-radius:6px; border:1px solid #e6e9ee; cursor:pointer; }
-    button.primary { background:var(--accent); color:white; border:none; }
-    .small { font-size:12px; color:#555; margin-top:6px; }
-    .hint { font-size:12px; color:#777; margin-top:6px; }
-    .route-info { margin-top:8px; font-weight:600; }
-    .link { color:var(--accent); text-decoration:underline; cursor:pointer; font-size:13px; }
-    #map { position:relative; z-index:0; }
-  </style>
+    <meta charset="utf-8" />
+    <title>PuneGo | Smart Micro-Commute Planner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --primary-600: #0F9D58; --primary-700: #0B7B45;
+            --secondary-500: #1976d2; --neutral-900: #111827;
+            --neutral-700: #374151; --neutral-500: #6b7280;
+            --neutral-300: #d1d5db; --neutral-200: #e5e7eb;
+            --neutral-100: #f3f4f6; --neutral-0: #ffffff;
+            --danger-500: #ef4444;
+        }
+        * { box-sizing: border-box; }
+        html, body, #map {
+            height: 100%; margin: 0; padding: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--neutral-100);
+        }
+        #map { z-index: 1; }
+        .panel {
+            position: absolute; top: 1rem; left: 1rem; z-index: 1000;
+            background: var(--neutral-0); padding: 1rem; border-radius: 0.75rem;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+            width: 360px; max-width: calc(100vw - 2rem);
+            display: flex; flex-direction: column; gap: 0.75rem;
+        }
+        .panel-header { font-weight: 700; font-size: 1.125rem; color: var(--neutral-900); }
+        .weather-widget {
+            padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 0.375rem;
+            background-color: var(--neutral-100); font-size: 0.875rem; color: var(--neutral-700);
+            text-align: center; display: flex; align-items: center; justify-content: center;
+        }
+        .input-group { display: flex; gap: 0.5rem; }
+        input[type="text"], input[type="number"] {
+            width: 100%; padding: 0.625rem; border: 1px solid var(--neutral-300);
+            border-radius: 0.375rem; font-size: 0.875rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        input[type="text"]:focus, input[type="number"]:focus {
+            outline: none; border-color: var(--secondary-500);
+            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.2);
+        }
+        .icon-button {
+            padding: 0.625rem; border-radius: 0.375rem; border: 1px solid var(--neutral-300);
+            cursor: pointer; background: var(--neutral-0); display: flex; align-items: center;
+            transition: background-color 0.2s;
+        }
+        .icon-button:hover { background-color: var(--neutral-100); }
+        .icon-button svg { width: 1rem; height: 1rem; stroke: var(--neutral-500); }
+        button.primary, button.button-secondary {
+            color: white; border: none; font-weight: 600;
+            padding: 0.75rem; border-radius: 0.375rem; cursor: pointer;
+            transition: background-color 0.2s; display: flex; justify-content: center; align-items: center;
+        }
+        button.primary { background: var(--primary-600); }
+        button.primary:hover { background: var(--primary-700); }
+        button.primary:disabled { background: var(--neutral-500); cursor: not-allowed; }
+        .parking-container { display: none; border-top: 1px solid var(--neutral-200); padding-top: 0.75rem; }
+        button.button-secondary {
+            background-color: var(--neutral-0); color: var(--neutral-700);
+            border: 1px solid var(--neutral-300); width: 100%;
+        }
+        button.button-secondary:hover { background-color: var(--neutral-100); }
+        .status-text { font-size: 0.875rem; color: var(--neutral-700); min-height: 1.25rem; }
+        .route-summary, .route-legend, .poi-controls { border-top: 1px solid var(--neutral-200); padding-top: 0.75rem; }
+        .route-legend { display: flex; gap: 1rem; font-size: 0.8125rem; }
+        .legend-item { display: flex; align-items: center; gap: 0.375rem; }
+        .legend-color-swatch { width: 1rem; height: 0.3125rem; border-radius: 99px; }
+        .route-block { margin-bottom: 0.75rem; }
+        .route-main { font-size: 0.875rem; }
+        .health-metrics { font-size: 0.8125rem; color: var(--neutral-500); padding-left: 0.5rem; }
+        .time-saved { color: var(--primary-600); font-weight: 600; font-size: 1rem; }
+        .small-link { font-size: 0.8125rem; color: var(--secondary-500); text-decoration: underline; cursor: pointer; }
+        .spinner {
+            width: 1.25rem; height: 1.25rem; border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: var(--neutral-0); border-radius: 50%; animation: spin 1s linear infinite;
+        }
+        .button-primary.loading .button-text { display: none; }
+        .button-primary:not(.loading) .spinner { display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 2000; display: flex;
+            justify-content: center; align-items: center; opacity: 0;
+            visibility: hidden; transition: opacity 0.3s, visibility 0.3s;
+        }
+        .modal-overlay.visible { opacity: 1; visibility: visible; }
+        .modal-content {
+            background: white; padding: 2rem; border-radius: 0.75rem;
+            max-width: 500px; width: calc(100% - 2rem); position: relative;
+            transform: scale(0.95); transition: transform 0.3s;
+        }
+        .modal-overlay.visible .modal-content { transform: scale(1); }
+        .modal-close {
+            position: absolute; top: 0.5rem; right: 0.5rem; border: none;
+            background: none; font-size: 1.5rem; cursor: pointer; color: var(--neutral-500);
+        }
+        .poi-controls { display: none; }
+        .poi-options { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.875rem; }
+        .poi-options label { display: flex; align-items: center; gap: 0.375rem; cursor: pointer; }
+        .parking-icon {
+            background-color: var(--secondary-500); color: white;
+            font-size: 16px; font-weight: bold; text-align: center;
+            line-height: 20px; border-radius: 50%;
+            border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            transition: transform 0.2s ease-in-out;
+            cursor: pointer;
+        }
+        .parking-icon-hover {
+            transform: scale(1.2);
+        }
+    </style>
 </head>
 <body>
-
-<div class="panel" id="controls">
-  <div style="font-weight:700; margin-bottom:8px">Micro-Commute Planner — Fastest (MVP)</div>
-
-  <div class="row">
-    <input id="startInput" type="text" placeholder="Start address or click map" />
-    <button id="startBtn" title="Search start">🔎</button>
-  </div>
-
-  <div class="row">
-    <input id="endInput" type="text" placeholder="End address or click map" />
-    <button id="endBtn" title="Search end">🔎</button>
-  </div>
-
-  <div class="row">
-    <select id="mode">
-      <option value="foot-walking">Walking</option>
-      <option value="cycling-regular">Cycling</option>
-      <option value="driving-car">E-scooter / small vehicle</option>
-    </select>
-    <button id="planBtn" class="primary">Plan Fastest</button>
-  </div>
-
-  <div class="hint">Tip: click on map to set start or end. Use the search icon to geocode text.</div>
-  <div id="status" class="small"></div>
-  <div id="routeSummary" class="route-info"></div>
-  <div style="margin-top:8px" class="small">
-    <span class="link" id="clearBtn">Clear map</span> •
-    <span class="link" id="helpBtn">Implementation notes</span>
-  </div>
-</div>
-
-<div id="map"></div>
-
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script>
-/*
-  Micro-Commute Planner — Step 1
-  - Leaflet map + click-to-place start/end
-  - Nominatim geocoding for address -> coords (free)
-  - OpenRouteService directions (fastest) -> route geoJSON
-  - Important: ORS API key is exposed if used from client; ok for prototype only.
-*/
-
-const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImFjMzQwMTdiMzBjNDRjYTZhNjZhZmM0OWExYmEzNzdiIiwiaCI6Im11cm11cjY0In0="; // << replace for dev. Use proxy for production.
-
-const map = L.map('map', { zoomControl: true }).setView([19.0760,72.8777], 13);
-
-// base tiles (OSM)
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
-
-// state
-let startMarker = null, endMarker = null;
-let routeLayer = null;
-let startCoord = null, endCoord = null;
-
-// simple UI refs
-const startInput = document.getElementById('startInput');
-const endInput = document.getElementById('endInput');
-const startBtn = document.getElementById('startBtn');
-const endBtn = document.getElementById('endBtn');
-const planBtn = document.getElementById('planBtn');
-const statusEl = document.getElementById('status');
-const routeSummary = document.getElementById('routeSummary');
-const clearBtn = document.getElementById('clearBtn');
-const helpBtn = document.getElementById('helpBtn');
-
-// helpers
-function setStatus(text, isError = false) {
-  statusEl.textContent = text || '';
-  statusEl.style.color = isError ? 'crimson' : '#333';
-}
-function formatMeters(m) {
-  if (m >= 1000) return (m/1000).toFixed(2) + ' km';
-  return Math.round(m) + ' m';
-}
-function formatSeconds(s) {
-  if (s < 60) return `${Math.round(s)}s`;
-  const mins = Math.floor(s/60);
-  if (mins < 60) return `${mins} min`;
-  const hours = (mins/60).toFixed(1);
-  return `${hours} h`;
-}
-function clearRoute() {
-  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
-  routeSummary.textContent = '';
-}
-
-// click-to-place logic: first click sets start, second sets end, third clears
-let clickMode = 'start'; // 'start' or 'end'
-map.on('click', (ev) => {
-  const { lat, lng } = ev.latlng;
-  if (!startCoord || (startCoord && endCoord)) {
-    // set start
-    setStart([lat,lng], true);
-    setStatus('Start set by click. Now set destination (click or search).');
-  } else {
-    // set end
-    setEnd([lat,lng], true);
-    setStatus('Destination set by click. Click "Plan Fastest" to compute route.');
-  }
-});
-
-// place marker helpers
-function setStart([lat,lng], byClick=false) {
-  startCoord = [lat, lng];
-  if (startMarker) startMarker.setLatLng([lat,lng]);
-  else startMarker = L.marker([lat,lng], { draggable:true }).addTo(map).bindPopup('Start').openPopup();
-  startMarker.on('dragend', (e) => {
-    const p = e.target.getLatLng();
-    startCoord = [p.lat, p.lng];
-  });
-  if (byClick) startInput.value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
-}
-function setEnd([lat,lng], byClick=false) {
-  endCoord = [lat, lng];
-  if (endMarker) endMarker.setLatLng([lat,lng]);
-  else endMarker = L.marker([lat,lng], { icon: L.icon({ iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-red.png', iconSize:[25,41], iconAnchor:[12,41] }) }).addTo(map).bindPopup('End').openPopup();
-  endMarker.on('dragend', (e) => {
-    const p = e.target.getLatLng();
-    endCoord = [p.lat, p.lng];
-  });
-  if (byClick) endInput.value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
-}
-
-// Nominatim geocoding (simple single-result)
-async function geocode(q) {
-  if (!q || q.trim() === '') { throw new Error('Empty query'); }
-  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
-  const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
-  if (!res.ok) throw new Error('Geocode failed: ' + res.status);
-  const arr = await res.json();
-  if (!arr || arr.length === 0) throw new Error('No results found');
-  return { lat: parseFloat(arr[0].lat), lon: parseFloat(arr[0].lon), display_name: arr[0].display_name };
-}
-
-// clicking search icons
-startBtn.onclick = async () => {
-  try {
-    setStatus('Searching start...');
-    const r = await geocode(startInput.value);
-    setStart([r.lat, r.lon]);
-    map.panTo([r.lat, r.lon]);
-    setStatus('Start found: ' + r.display_name);
-  } catch (err) { setStatus(err.message, true); }
-};
-endBtn.onclick = async () => {
-  try {
-    setStatus('Searching destination...');
-    const r = await geocode(endInput.value);
-    setEnd([r.lat, r.lon]);
-    map.panTo([r.lat, r.lon]);
-    setStatus('Destination found: ' + r.display_name);
-  } catch (err) { setStatus(err.message, true); }
-};
-
-// ORS directions: fastest via GET (simple). ORS expects coords as lng,lat
-async function fetchORSRoute(profile, startLatLng, endLatLng) {
-  const start = `${startLatLng[1]},${startLatLng[0]}`; // lng,lat
-  const end = `${endLatLng[1]},${endLatLng[0]}`;       // lng,lat
-  const url = `https://api.openrouteservice.org/v2/directions/${profile}?api_key=${ORS_API_KEY}&start=${start}&end=${end}`;
-  // Note: GET is OK for two-points. For more params use POST.
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`ORS error ${res.status}: ${text}`);
-  }
-  const json = await res.json();
-  if (!json || !json.features || json.features.length === 0) throw new Error('No route returned from ORS');
-  return json;
-}
-
-function drawRouteFromORSGeoJSON(geojson, color='#1976d2') {
-  clearRoute();
-  routeLayer = L.geoJSON(geojson, {
-    style: () => ({ color, weight: 5, opacity: 0.85 })
-  }).addTo(map);
-  map.fitBounds(routeLayer.getBounds(), { padding: [40,40] });
-  // show start/end markers on top
- // if (startMarker) startMarker.bringToFront();
-  //if (endMarker) endMarker.bringToFront();
-}
-
-// Plan route button
-planBtn.onclick = async () => {
-  try {
-    if (!startCoord || !endCoord) { setStatus('Please set both start and destination (click map or search)', true); return; }
-    setStatus('Requesting fastest route...');
-    planBtn.disabled = true;
-
-    const profile = document.getElementById('mode').value; // e.g. 'foot-walking'
-    const data = await fetchORSRoute(profile, startCoord, endCoord);
-
-    // ORS geojson: features[0] geometry coords and properties.summary
-    drawRouteFromORSGeoJSON(data);
-    // extract summary
-    const summary = data.features[0].properties && data.features[0].properties.summary;
-    if (summary) {
-      const dist = formatMeters(summary.distance);
-      const dur = formatSeconds(summary.duration);
-      routeSummary.textContent = `Fastest (${profile.replace('-', ' ')}): ${dist} • ${dur}`;
-    } else {
-      routeSummary.textContent = 'Route found (no summary available)';
-    }
-    setStatus('Route displayed. Drag markers to tweak and re-plan.');
-  } catch (err) {
-    console.error(err);
-    setStatus(err.message || 'Route failed', true);
-  } finally {
-    planBtn.disabled = false;
-  }
-};
-
-// clear logic
-clearBtn.onclick = () => {
-  if (startMarker) { map.removeLayer(startMarker); startMarker = null; startCoord = null; startInput.value = ''; }
-  if (endMarker) { map.removeLayer(endMarker); endMarker = null; endCoord = null; endInput.value = ''; }
-  clearRoute();
-  setStatus('');
-};
-
-// help modal (quick notes)
-helpBtn.onclick = () => {
-  alert(
-`Implementation notes (quick):
-- This client code uses your ORS key directly (exposed). For production, place queries behind a small server proxy to keep the key secret.
-- Nominatim geocoding has usage limits; add caching + debounce for search.
-- If ORS returns CORS errors in your environment, use a server proxy.
-- Next steps I suggest: add scenic (via park waypoints via Overpass) and low-stress (route scoring + avoid major highways)`
-  );
-};
-
-// small debugging helpers
-window.__mc_debug = {
-  setStart, setEnd, fetchORSRoute
-};
-
-setStatus('Ready — click map or paste addresses, then "Plan Fastest".');
-</script>
+    <div class="panel">
+        <div class="panel-header">PuneGo Planner</div>
+        <div id="weatherWidget" class="weather-widget"></div>
+        <div class="input-group">
+            <input id="startInput" type="text" placeholder="Start address" />
+            <button id="startBtn" class="icon-button" title="Search for start address">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </button>
+        </div>
+        <div class="input-group">
+            <input id="endInput" type="text" placeholder="Destination address" />
+            <button id="endBtn" class="icon-button" title="Search for destination address">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </button>
+        </div>
+        <div class="input-group">
+            <input type="number" id="userWeight" placeholder="Weight (kg)" value="65" style="flex-grow: 0; width: 120px;">
+            <span class="small-link" style="text-decoration:none; color: var(--neutral-500); flex-grow: 1;">(For calorie estimate)</span>
+        </div>
+        <button id="planBtn" class="button-primary">
+            <span class="button-text">Find Smart Routes</span>
+            <div class="spinner"></div>
+        </button>
+        <div id="status" class="status-text"></div>
+        <div id="routeLegend" class="route-legend"></div>
+        <div id="routeSummary" class="route-summary"></div>
+        <div id="poiControls" class="poi-controls">
+            <div style="font-weight: 600; font-size: 0.8125rem; margin-bottom: 0.5rem;">Show on route:</div>
+            <div class="poi-options">
+                <label><input type="checkbox" name="poi" value="cafe"> ☕ Cafes</label>
+                <label><input type="checkbox" name="poi" value="restaurant"> 🍴 Restaurants</label>
+                <label><input type="checkbox" name="poi" value="fuel"> ⛽ Petrol Pumps</label>
+                <label><input type="checkbox" name="poi" value="hotel"> 🏨 Hotels</label>
+            </div>
+        </div>
+        <div id="parkingContainer" class="parking-container">
+            <button id="findParkingBtn" class="button-secondary">🅿️ Find Parking Near Destination</button>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
+            <span class="small-link" id="clearBtn">Clear All</span>
+            <span class="small-link" id="helpBtn">Implementation Notes</span>
+        </div>
+    </div>
+    <div id="map"></div>
+    <div id="helpModal" class="modal-overlay">
+        <div class="modal-content">
+            <button id="modalCloseBtn" class="modal-close">&times;</button>
+            <h3>Implementation Notes</h3>
+            <ul>
+                <li>This prototype uses your API keys directly on the client-side. For production, all API calls should be made through a backend server (proxy) to keep your keys secure.</li>
+                <li>Map data layers (traffic signals, POIs, parking) are from OpenStreetMap via the Overpass API.</li>
+                <li>This app can be extended by adding real-time data for scooter availability and public transit.</li>
+            </ul>
+        </div>
+    </div>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="config.js"></script>
+    <script src="main.js"></script>
 </body>
 </html>
